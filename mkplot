@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2059
+# shellcheck disable=SC2059,SC2207
 
 set -euo pipefail
+set +x
 
 if [ -z ${MKPLOT_TMP_PREFIX+x} ]; then
   MKPLOT_TMP_PREFIX='mkplot_tmp_'
 fi
+
+tmp_list=()
 
 # GENERAL FUNCTIONS ##########################################################
 MKPLOT_BOLD='\033[1m'
@@ -14,7 +17,7 @@ MKPLOT_RED='\033[31m'
 MKPLOT_RESET='\033[0m'
 
 mkplot_msg()  {
-  local msg=${1}
+  local msg=$1
   if [ -t 1 ]; then printf "${MKPLOT_BOLD}${MKPLOT_BLUE}"; fi
   printf '==> '
   if [ -t 1 ]; then printf "${MKPLOT_RESET}${MKPLOT_BOLD}"; fi
@@ -23,77 +26,159 @@ mkplot_msg()  {
 }
 
 mkplot_err() {
-  local msg=${1}
-  if [ -t 1 ]; then printf "${MKPLOT_BOLD}${MKPLOT_RED}"; fi
-  printf 'error: '
-  if [ -t 1 ]; then printf "${MKPLOT_RESET}"; fi
-  echo "${msg}"
-  exit 1
+  local msg=$1
+  if [ -t 1 ]; then printf "${MKPLOT_BOLD}${MKPLOT_RED}" 1>&2; fi
+  printf 'error: ' 1>&2
+  if [ -t 1 ]; then printf "${MKPLOT_RESET}" 1>&2; fi
+  echo "${msg}" 1>&2
 }
 
 mkplot_tmp()  {
   local ext=${1}
-  mktemp "${MKPLOT_TMP_PREFIX}XXXXXX.${ext}"
+  local var=${2}
+  local tmp
+  tmp=$(mktemp "${MKPLOT_TMP_PREFIX}XXXXXX")
+  mv "${tmp}" "${tmp}.${ext}"
+  tmp_list+=("${tmp}")
+  printf -v "${var}" -- "${tmp}.${ext}"
 }
 
-mkplot_clean()  {
+mkplot_clean() {
   mkplot_msg 'cleanup'
-  rm -f "${MKPLOT_TMP_PREFIX}"*
+  local tmp
+  for tmp in "${tmp_list[@]}"; do
+    rm -f "${tmp}"*
+  done
+}
+
+mkplot_pdflatex() {
+  local src=$1
+  if [ -z ${MKPLOT_PDFLATEX+x} ]; then
+    MKPLOT_PDFLATEX='texfot --quiet pdflatex'
+  fi
+  mkplot_msg 'compile LaTeX document'
+  ${MKPLOT_PDFLATEX} --interaction=nonstopmode --halt-on-error "${src}"
+}
+
+mkplot_pdfcrop() {
+  local pdf=$1
+  if [ -z ${MKPLOT_PDFCROP+x} ]; then
+    MKPLOT_PDFCROP='pdfcrop'
+  fi
+  mkplot_msg 'crop PDF'
+  ${MKPLOT_PDFCROP} --margin 1 "${pdf}" "${pdf}"
 }
 
 # SUBCOMMANDS ################################################################
-mkplot_cmd_gnuplot_png()  {
-  local out="$1"
-  local src="$2"
+
+# gnuplot
+mkplot_cmd_gnuplot()  {
+  if (($# != 2)); then
+    echo "usage: ${FUNCNAME[0]//_cmd_/ } <source> <output>" 1>&2
+    echo 1>&2
+    cat <<EOF  1>&2
+Generate plot from gnuplot script using the cairolatex terminal. The script must not
+have a 'set ouput' statement. If the file mkplot_preamble.tex is present, it is included 
+in the preamble of the generated LaTeX code.
+EOF
+    exit 1
+  fi
+
+  local src="$1"
+  local out="$2"
   local fig_tmp
   local doc_tmp
 
   if [ -z ${MKPLOT_GNUPLOT+x} ]; then
     MKPLOT_GNUPLOT='gnuplot'
   fi
-  if [ -z ${MKPLOT_PDFLATEX+x} ]; then
-    MKPLOT_PDFLATEX='texfot --quiet pdflatex'
-  fi
-  if [ -z ${MKPLOT_PDFCROP+x} ]; then
-    MKPLOT_PDFCROP='pdfcrop'
-  fi
 
-  if ! grep -q 'set term cairolatex' "${src}"; then
+  mkplot_msg "generating '${out}' from '${src}' (gnuplot)"
+  if ! grep -Eq 'set term(inal)? cairolatex' "${src}"; then
     mkplot_err "gnuplot script '${src}' does not use terminal cairolatex"
+    exit 1
   fi
   if grep -q 'set output' "${src}"; then
     mkplot_err "gnuplot script '${src}' has a 'set ouput' line"
+    exit 1
   fi
-  fig_tmp=$(mkplot_tmp tex)
-  doc_tmp=$(mkplot_tmp tex)
+  mkplot_tmp tex fig_tmp
+  mkplot_tmp tex doc_tmp
   pdf_tmp=${doc_tmp/%tex/pdf}
   mkplot_msg 'run gnuplot script'
   ${MKPLOT_GNUPLOT} -e "set output '${fig_tmp}'" "${src}"
   mkplot_msg 'generate LaTeX document'
+  if [ -f mkplot_preamble.tex ]; then
+    echo "found custom preamble 'mkplot_preamble.tex'"
+  fi
   cat <<EOF  >"${doc_tmp}"
-\documentclass{minimal}
+\documentclass[a4paper,12pt]{article}
+\usepackage[cm,empty]{fullpage}
 \usepackage{graphicx,xcolor}
-\usepackage{mathpazo,CrimsonPro}
+\InputIfFileExists{mkplot_preamble.tex}{}{}
 \begin{document}
 \input{${fig_tmp}}
 \end{document}
 EOF
-  mkplot_msg 'compile LaTeX document'
-  ${MKPLOT_PDFLATEX} --interaction=nonstopmode --halt-on-error \
-    "${doc_tmp}"
-  mkplot_msg 'crop PDF'
-  ${MKPLOT_PDFCROP} --margin 1 "${pdf_tmp}" "${pdf_tmp}"
+  mkplot_pdflatex "${doc_tmp}"
+  mkplot_pdfcrop "${pdf_tmp}"
   mv "${pdf_tmp}" "${out}"
-  mkplot_msg "generated '${out}'"
+  mkplot_clean
 }
 
-if (($# != 3)); then
-    echo "usage: $(basename "$0") <type> <source> <output>" 1>&2
+# TikZ
+mkplot_cmd_tikz()  {
+  if (($# != 2)); then
+    echo "usage: ${FUNCNAME[0]//_cmd_/ } <source> <output>" 1>&2
+    echo 1>&2
+    cat <<EOF  1>&2
+Generate plot from LaTeX TikZ source file. The content of the source file is inputted 
+within '\begin{document}\end{document}'. If the file mkplot_preamble.tex is present, 
+it is included in the preamble of the generated LaTeX code.
+EOF
+    exit 1
+  fi
+
+  local src="$1"
+  local out="$2"
+
+  mkplot_msg "generating '${out}' from '${src}' (tikz)"
+  mkplot_tmp tex doc_tmp
+  pdf_tmp=${doc_tmp/%tex/pdf}
+  mkplot_msg 'generate LaTeX document'
+  if [ -f mkplot_preamble.tex ]; then
+    echo "found custom preamble 'mkplot_preamble.tex'"
+  fi
+  cat <<EOF  >"${doc_tmp}"
+\documentclass[a4paper,12pt]{article}
+\usepackage[cm,empty]{fullpage}
+\usepackage{graphicx,xcolor,tikz}
+\InputIfFileExists{mkplot_preamble.tex}{}{}
+\begin{document}
+\input{${src}}
+\end{document}
+EOF
+  mkplot_pdflatex "${doc_tmp}"
+  mkplot_pdfcrop "${pdf_tmp}"
+  mv "${pdf_tmp}" "${out}"
+  mkplot_msg "generated '${out}'"
+  mkplot_clean
+}
+
+# MAIN #######################################################################
+if (($# < 1)); then
+    echo "usage: $(basename "$0") <command> <options>" 1>&2
     exit 1
 fi
 type=$1
-src=$2
-out=$3
 
-"mkplot_cmd_${type}" "${out}" "${src}"
-mkplot_clean
+func_name="mkplot_cmd_${type}"
+if declare -f "${func_name}" >/dev/null; then
+  shift
+  "${func_name}" "$@"
+else
+  mkplot_err "subcommand '${type}' unknown"
+  printf '\npossible subcommands:\n'
+  cmds=($(compgen -A function | grep _cmd_))
+  echo "${cmds[@]//mkplot_cmd_/}"
+fi
