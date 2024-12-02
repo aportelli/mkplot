@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2059
+
+set -euo pipefail
+
+if [ -z ${MKPLOT_TMP_PREFIX+x} ]; then
+  MKPLOT_TMP_PREFIX='mkplot_tmp_'
+fi
+
+# GENERAL FUNCTIONS ##########################################################
+MKPLOT_BOLD='\033[1m'
+MKPLOT_BLUE='\033[34m'
+MKPLOT_RED='\033[31m'
+MKPLOT_RESET='\033[0m'
+
+mkplot_msg()  {
+  local msg=${1}
+  if [ -t 1 ]; then printf "${MKPLOT_BOLD}${MKPLOT_BLUE}"; fi
+  printf '==> '
+  if [ -t 1 ]; then printf "${MKPLOT_RESET}${MKPLOT_BOLD}"; fi
+  echo "${msg}"
+  if [ -t 1 ]; then printf "${MKPLOT_RESET}"; fi
+}
+
+mkplot_err() {
+  local msg=${1}
+  if [ -t 1 ]; then printf "${MKPLOT_BOLD}${MKPLOT_RED}"; fi
+  printf 'error: '
+  if [ -t 1 ]; then printf "${MKPLOT_RESET}"; fi
+  echo "${msg}"
+  exit 1
+}
+
+mkplot_tmp()  {
+  local ext=${1}
+  mktemp "${MKPLOT_TMP_PREFIX}XXXXXX.${ext}"
+}
+
+mkplot_clean()  {
+  mkplot_msg 'cleanup'
+  rm -f "${MKPLOT_TMP_PREFIX}"*
+}
+
+# SUBCOMMANDS ################################################################
+mkplot_cmd_gnuplot_png()  {
+  local out="$1"
+  local src="$2"
+  local fig_tmp
+  local doc_tmp
+
+  if [ -z ${MKPLOT_GNUPLOT+x} ]; then
+    MKPLOT_GNUPLOT='gnuplot'
+  fi
+  if [ -z ${MKPLOT_PDFLATEX+x} ]; then
+    MKPLOT_PDFLATEX='texfot --quiet pdflatex'
+  fi
+  if [ -z ${MKPLOT_PDFCROP+x} ]; then
+    MKPLOT_PDFCROP='pdfcrop'
+  fi
+
+  if ! grep -q 'set term cairolatex' "${src}"; then
+    mkplot_err "gnuplot script '${src}' does not use terminal cairolatex"
+  fi
+  if grep -q 'set output' "${src}"; then
+    mkplot_err "gnuplot script '${src}' has a 'set ouput' line"
+  fi
+  fig_tmp=$(mkplot_tmp tex)
+  doc_tmp=$(mkplot_tmp tex)
+  pdf_tmp=${doc_tmp/%tex/pdf}
+  mkplot_msg 'run gnuplot script'
+  ${MKPLOT_GNUPLOT} -e "set output '${fig_tmp}'" "${src}"
+  mkplot_msg 'generate LaTeX document'
+  cat <<EOF  >"${doc_tmp}"
+\documentclass{minimal}
+\usepackage{graphicx,xcolor}
+\usepackage{mathpazo,CrimsonPro}
+\begin{document}
+\input{${fig_tmp}}
+\end{document}
+EOF
+  mkplot_msg 'compile LaTeX document'
+  ${MKPLOT_PDFLATEX} --interaction=nonstopmode --halt-on-error \
+    "${doc_tmp}"
+  mkplot_msg 'crop PDF'
+  ${MKPLOT_PDFCROP} --margin 1 "${pdf_tmp}" "${pdf_tmp}"
+  mv "${pdf_tmp}" "${out}"
+  mkplot_msg "generated '${out}'"
+}
+
+if (($# != 3)); then
+    echo "usage: $(basename "$0") <type> <source> <output>" 1>&2
+    exit 1
+fi
+type=$1
+src=$2
+out=$3
+
+"mkplot_cmd_${type}" "${out}" "${src}"
+mkplot_clean
