@@ -71,7 +71,7 @@ mkplot_pdfcrop() {
 
 # SUBCOMMANDS ################################################################
 
-# gnuplot
+# gnuplot ....................................................................
 mkplot_cmd_gnuplot()  {
   if (($# != 2)); then
     echo "usage: ${FUNCNAME[0]//_cmd_/ } <source> <output>" 1>&2
@@ -88,6 +88,7 @@ EOF
   local out="$2"
   local fig_tmp
   local doc_tmp
+  local plt_tmp
 
   if [ -z ${MKPLOT_GNUPLOT+x} ]; then
     MKPLOT_GNUPLOT='gnuplot'
@@ -106,14 +107,18 @@ EOF
   mkplot_tmp tex doc_tmp
   pdf_tmp=${doc_tmp/%tex/pdf}
   mkplot_msg 'run gnuplot script'
-  ${MKPLOT_GNUPLOT} -e "set output '${fig_tmp}'" "${src}"
+  mkplot_tmp gp plt_tmp
+  cat <<EOF  >"${plt_tmp}"
+set output '${fig_tmp}'
+EOF
+  cat "${src}" >> "${plt_tmp}"
+  ${MKPLOT_GNUPLOT} "${plt_tmp}"
   mkplot_msg 'generate LaTeX document'
   if [ -f mkplot_preamble.tex ]; then
     echo "found custom preamble 'mkplot_preamble.tex'"
   fi
-  cat <<EOF  >"${doc_tmp}"
-\documentclass[a4paper,12pt]{article}
-\usepackage[cm,empty]{fullpage}
+  cat <<EOF >"${doc_tmp}"
+\documentclass[12pt]{standalone}
 \usepackage{graphicx,xcolor}
 \InputIfFileExists{mkplot_preamble.tex}{}{}
 \begin{document}
@@ -121,12 +126,11 @@ EOF
 \end{document}
 EOF
   mkplot_pdflatex "${doc_tmp}"
-  mkplot_pdfcrop "${pdf_tmp}"
   mv "${pdf_tmp}" "${out}"
   mkplot_clean
 }
 
-# TikZ
+# TikZ .......................................................................
 mkplot_cmd_tikz()  {
   if (($# != 2)); then
     echo "usage: ${FUNCNAME[0]//_cmd_/ } <source> <output>" 1>&2
@@ -150,8 +154,7 @@ EOF
     echo "found custom preamble 'mkplot_preamble.tex'"
   fi
   cat <<EOF  >"${doc_tmp}"
-\documentclass[a4paper,12pt]{article}
-\usepackage[cm,empty]{fullpage}
+\documentclass[12pt]{standalone}
 \usepackage{graphicx,xcolor,tikz}
 \InputIfFileExists{mkplot_preamble.tex}{}{}
 \begin{document}
@@ -159,7 +162,6 @@ EOF
 \end{document}
 EOF
   mkplot_pdflatex "${doc_tmp}"
-  mkplot_pdfcrop "${pdf_tmp}"
   mv "${pdf_tmp}" "${out}"
   mkplot_msg "generated '${out}'"
   mkplot_clean
