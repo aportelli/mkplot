@@ -33,6 +33,11 @@ mkplot_err() {
   echo "${msg}" 1>&2
 }
 
+mkplot_commands() {
+  cmds=($(compgen -A function | grep _cmd_))
+  echo "${cmds[@]//mkplot_cmd_/}"
+}
+
 mkplot_tmp()  {
   local ext=${1}
   local var=${2}
@@ -70,6 +75,11 @@ mkplot_pdfcrop() {
 }
 
 # SUBCOMMANDS ################################################################
+# clean ......................................................................
+mkplot_cmd_clean() {
+  mkplot_msg 'cleaning all temporary files'
+  rm -rf "${MKPLOT_TMP_PREFIX}"*
+}
 
 # gnuplot ....................................................................
 mkplot_cmd_gnuplot()  {
@@ -170,6 +180,8 @@ EOF
 # MAIN #######################################################################
 if (($# < 1)); then
     echo "usage: $(basename "$0") <command> <options>" 1>&2
+    printf '\npossible commands:\n'
+    mkplot_commands | tr ' ' '\n'
     exit 1
 fi
 type=$1
@@ -179,8 +191,7 @@ if declare -f "${func_name}" >/dev/null; then
   shift
   "${func_name}" "$@"
 else
-  mkplot_err "subcommand '${type}' unknown"
-  printf '\npossible subcommands:\n'
-  cmds=($(compgen -A function | grep _cmd_))
-  echo "${cmds[@]//mkplot_cmd_/}"
+  mkplot_err "command '${type}' unknown"
+  printf '\npossible commands:\n'
+  mkplot_commands | tr ' ' '\n'
 fi
