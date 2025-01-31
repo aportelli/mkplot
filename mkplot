@@ -165,7 +165,8 @@ EOF
   fi
   cat <<EOF  >"${doc_tmp}"
 \documentclass[12pt]{standalone}
-\usepackage{graphicx,xcolor,tikz}
+\usepackage{graphicx,xcolor,tikz,pgfplots}
+\pgfplotsset{compat=newest}
 \InputIfFileExists{mkplot_preamble.tex}{}{}
 \begin{document}
 \input{${src}}
