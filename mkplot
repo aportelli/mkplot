@@ -22,7 +22,9 @@ set +x
 if [ -z ${MKPLOT_TMP_PREFIX+x} ]; then
   MKPLOT_TMP_PREFIX='mkplot_tmp_'
 fi
-
+if [ -z ${MKPLOT_LATEX_SIZE+x} ]; then
+  MKPLOT_LATEX_SIZE='12pt'
+fi
 tmp_list=()
 
 # GENERAL FUNCTIONS ##########################################################
@@ -54,8 +56,8 @@ mkplot_commands() {
 }
 
 mkplot_tmp()  {
-  local ext=${1}
-  local var=${2}
+  local ext=$1
+  local var=$2
   local tmp
   tmp=$(mktemp "${MKPLOT_TMP_PREFIX}XXXXXX")
   mv "${tmp}" "${tmp}.${ext}"
@@ -143,7 +145,7 @@ EOF
     echo "found custom preamble 'mkplot_preamble.tex'"
   fi
   cat <<EOF >"${doc_tmp}"
-\documentclass[12pt]{standalone}
+\documentclass[${MKPLOT_LATEX_SIZE}]{standalone}
 \usepackage{graphicx,xcolor}
 \InputIfFileExists{mkplot_preamble.tex}{}{}
 \begin{document}
@@ -179,9 +181,46 @@ EOF
     echo "found custom preamble 'mkplot_preamble.tex'"
   fi
   cat <<EOF  >"${doc_tmp}"
-\documentclass[12pt]{standalone}
+\documentclass[${MKPLOT_LATEX_SIZE}]{standalone}
 \usepackage{graphicx,xcolor,tikz,pgfplots}
 \pgfplotsset{compat=newest}
+\InputIfFileExists{mkplot_preamble.tex}{}{}
+\begin{document}
+\input{${src}}
+\end{document}
+EOF
+  mkplot_pdflatex "${doc_tmp}"
+  mv "${pdf_tmp}" "${out}"
+  mkplot_msg "generated '${out}'"
+  mkplot_clean
+}
+
+# Arbitrary latex ............................................................
+mkplot_cmd_latex()  {
+  if (($# != 2)); then
+    echo "usage: ${FUNCNAME[0]//_cmd_/ } <source> <output>" 1>&2
+    echo 1>&2
+    cat <<EOF  1>&2
+Generate plot from LaTeX source file. The content of the source file is inputted 
+within '\begin{document}\end{document}'. If the file mkplot_preamble.tex is present, 
+it is included in the preamble of the generated LaTeX code.
+EOF
+    exit 1
+  fi
+
+  local src="$1"
+  local out="$2"
+
+  mkplot_msg "generating '${out}' from '${src}' (latex)"
+  mkplot_tmp tex doc_tmp
+  pdf_tmp=${doc_tmp/%tex/pdf}
+  mkplot_msg 'generate LaTeX document'
+  if [ -f mkplot_preamble.tex ]; then
+    echo "found custom preamble 'mkplot_preamble.tex'"
+  fi
+  cat <<EOF  >"${doc_tmp}"
+\documentclass[${MKPLOT_LATEX_SIZE}]{standalone}
+\usepackage{graphicx,xcolor,subcaption}
 \InputIfFileExists{mkplot_preamble.tex}{}{}
 \begin{document}
 \input{${src}}
